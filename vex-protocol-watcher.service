@@ -1,0 +1,21 @@
+[Unit]
+Description=vex-protocol GitHub watcher + Spire deploy (see setup.sh)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ender
+Group=ender
+WorkingDirectory=/home/ender/vex-protocol-watcher
+ExecStart=/home/ender/vex-protocol-watcher/watcher.sh
+Restart=on-failure
+RestartSec=10
+# Optional: drop a token in /etc/vex-protocol-watcher.env (e.g. GITHUB_TOKEN=ghp_...)
+EnvironmentFile=-/etc/vex-protocol-watcher.env
+StandardOutput=append:/home/ender/vex-protocol-watcher/watcher.log
+StandardError=append:/home/ender/vex-protocol-watcher/watcher.log
+
+[Install]
+WantedBy=multi-user.target
