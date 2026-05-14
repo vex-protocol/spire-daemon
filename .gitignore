@@ -1,3 +1,4 @@
 *log
 last-sha*x
-.*lock
+*.lock
+
