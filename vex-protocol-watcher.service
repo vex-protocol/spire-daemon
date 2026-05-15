@@ -6,16 +6,14 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=ender
-Group=ender
-WorkingDirectory=/home/ender/vex-protocol-watcher
-ExecStart=/home/ender/vex-protocol-watcher/watcher.sh
+WorkingDirectory=%h/vex-protocol-watcher
+ExecStart=%h/vex-protocol-watcher/watcher.sh
 Restart=on-failure
 RestartSec=10
 # Optional: drop a token in /etc/vex-protocol-watcher.env (e.g. GITHUB_TOKEN=ghp_...)
 EnvironmentFile=-/etc/vex-protocol-watcher.env
-StandardOutput=append:/home/ender/vex-protocol-watcher/watcher.log
-StandardError=append:/home/ender/vex-protocol-watcher/watcher.log
+StandardOutput=append:%h/vex-protocol-watcher/watcher.log
+StandardError=append:%h/vex-protocol-watcher/watcher.log
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

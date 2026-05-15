@@ -4,36 +4,160 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cmd="${1:-deploy}"
 
 export PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 usage() {
   cat <<'EOF'
 Commands:
-  deploy (default)   git reset to origin/$BRANCH, pnpm install --frozen-lockfile, docker compose up
-  daemon start|stop|status|tail   run watcher.sh in the background (flock + nohup)
+  deploy (default)   git reset, pnpm install --frozen-lockfile, docker compose up
+  daemon [opts] start|stop|status|tail   background watcher (opts: --config PATH)
   install            symlink user systemd unit and daemon-reload
   help
 
-Environment (deploy):
-  REPO_DIR, BRANCH, COMPOSE_DIR — repo root, git branch, Spire app directory
+Config: config.json next to this script (or $VEX_WATCHER_CONFIG). Created automatically
+if missing when you use the default path. Env overrides file; CLI flags override both.
+If deploy.repo_dir does not exist, it is git-cloned from github.owner/repo (or deploy.clone_url).
 
-  Optional (same script for prod vs staging — set in EnvironmentFile / shell):
-  COMPOSE_FILE        extra compose file: basename under COMPOSE_DIR, or absolute path
-                      (passed once as: docker compose -f <file> …)
-  SPIRE_DOCKER_NO_BUILD=1   omit --build (e.g. image already rebuilt by PRE_COMPOSE_COMMAND)
-  PRE_COMPOSE_COMMAND optional shell snippet run in COMPOSE_DIR before docker compose
-                      (e.g. bash deploy/rebuild-staging-image.sh)
+deploy flags (omit the word deploy when the first argument is already a flag, e.g. ./setup.sh --branch dev):
+  --config|-c PATH
+  --clone-url URL       (default https://github.com/<owner>/<repo>.git)
+  --branch STR          (git checkout; default is github.branch in config)
+  --repo-dir, --compose-dir, --compose-file PATH
+  --pre-compose SHELL_SNIPPET
+  --no-build
 EOF
 }
 
-deploy() {
+deploy_main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config | -c)
+        [[ $# -lt 2 ]] && {
+          echo "deploy: --config needs a path" >&2
+          exit 2
+        }
+        VEX_WATCHER_CONFIG="$2"
+        shift 2
+        ;;
+      --repo-dir)
+        [[ $# -lt 2 ]] && {
+          echo "deploy: --repo-dir needs a path" >&2
+          exit 2
+        }
+        CLI_REPO_DIR="$2"
+        shift 2
+        ;;
+      --clone-url)
+        [[ $# -lt 2 ]] && {
+          echo "deploy: --clone-url needs a value" >&2
+          exit 2
+        }
+        CLI_CLONE_URL="$2"
+        shift 2
+        ;;
+      --branch)
+        [[ $# -lt 2 ]] && {
+          echo "deploy: --branch needs a value" >&2
+          exit 2
+        }
+        CLI_BRANCH="$2"
+        shift 2
+        ;;
+      --compose-dir)
+        [[ $# -lt 2 ]] && {
+          echo "deploy: --compose-dir needs a path" >&2
+          exit 2
+        }
+        CLI_COMPOSE_DIR="$2"
+        shift 2
+        ;;
+      --compose-file)
+        [[ $# -lt 2 ]] && {
+          echo "deploy: --compose-file needs a path" >&2
+          exit 2
+        }
+        CLI_COMPOSE_FILE="$2"
+        shift 2
+        ;;
+      --pre-compose)
+        [[ $# -lt 2 ]] && {
+          echo "deploy: --pre-compose needs a value" >&2
+          exit 2
+        }
+        CLI_PRE_COMPOSE_COMMAND="$2"
+        shift 2
+        ;;
+      --no-build)
+        CLI_NO_BUILD=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "deploy: unknown option: $1 (try: setup.sh help)" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  # shellcheck source=lib-config.sh
+  source "$SCRIPT_DIR/lib-config.sh"
+  local cfg_path
+  cfg_path="$(vex_watcher_prepare_config_path "$SCRIPT_DIR")" || exit 1
+  vex_watcher_apply_config "$cfg_path" || exit 1
+
+  [[ -n "${CLI_REPO_DIR:-}" ]] && REPO_DIR="$(vex_watcher_expand_path "$CLI_REPO_DIR")"
+  [[ -n "${CLI_CLONE_URL:-}" ]] && REPO_CLONE_URL="$CLI_CLONE_URL"
+  [[ -n "${CLI_BRANCH:-}" ]] && BRANCH="$CLI_BRANCH"
+  [[ -n "${CLI_COMPOSE_DIR:-}" ]] && COMPOSE_DIR="$(vex_watcher_expand_path "$CLI_COMPOSE_DIR")"
+  [[ -n "${CLI_COMPOSE_FILE:-}" ]] && COMPOSE_FILE="$CLI_COMPOSE_FILE"
+  [[ -n "${CLI_PRE_COMPOSE_COMMAND:-}" ]] && PRE_COMPOSE_COMMAND="$CLI_PRE_COMPOSE_COMMAND"
+  [[ -n "${CLI_NO_BUILD:-}" ]] && SPIRE_DOCKER_NO_BUILD=1
+
   local REPO_DIR="${REPO_DIR:-$HOME/vex-protocol}"
-  local BRANCH="${BRANCH:-master}"
+  local BRANCH="${BRANCH:-${GITHUB_BRANCH:-master}}"
   local COMPOSE_DIR="${COMPOSE_DIR:-$REPO_DIR/apps/spire}"
 
   log() { printf '[setup deploy %s] %s\n' "$(date -u +%FT%TZ)" "$*"; }
+
+  deploy_ensure_repo() {
+    local dir="$1" branch="$2"
+    local url="${REPO_CLONE_URL:-https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}.git}"
+    if [[ -d "$dir/.git" ]]; then
+      return 0
+    fi
+    if [[ -e "$dir" ]]; then
+      if [[ ! -d "$dir" ]]; then
+        echo "deploy: path exists and is not a directory: $dir" >&2
+        exit 1
+      fi
+      if compgen -G "$dir/*" >/dev/null 2>&1 || compgen -G "$dir/.[!.]*" >/dev/null 2>&1; then
+        echo "deploy: $dir exists but is not a git clone (directory not empty)" >&2
+        exit 1
+      fi
+      rmdir "$dir" 2>/dev/null || {
+        echo "deploy: $dir exists, is not a clone, and could not be removed" >&2
+        exit 1
+      }
+    fi
+    mkdir -p "$(dirname "$dir")"
+    log "cloning $url -> $dir (branch $branch)"
+    if git clone --branch "$branch" --single-branch "$url" "$dir" 2>/dev/null; then
+      return 0
+    fi
+    log "clone with --branch $branch failed; cloning default remote then checking out $branch"
+    git clone "$url" "$dir"
+    (
+      cd "$dir" || exit 1
+      git fetch origin
+      git checkout "$branch" || git checkout -B "$branch" "origin/$branch"
+    )
+  }
+
+  deploy_ensure_repo "$REPO_DIR" "$BRANCH"
 
   cd "$REPO_DIR"
 
@@ -77,7 +201,28 @@ deploy() {
 
 daemon() {
   set -euo pipefail
-  local sub="${1:-start}"
+  local sub="start"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config | -c)
+        [[ $# -lt 2 ]] && {
+          echo "daemon: --config needs a path" >&2
+          exit 2
+        }
+        export VEX_WATCHER_CONFIG="$2"
+        shift 2
+        ;;
+      start | stop | status | tail)
+        sub="$1"
+        shift
+        ;;
+      *)
+        echo "daemon: unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
   local PID_FILE="$SCRIPT_DIR/watcher.pid"
   local LOCK_FILE="$SCRIPT_DIR/watcher.lock"
   local LOG_FILE="$SCRIPT_DIR/watcher.log"
@@ -88,10 +233,11 @@ daemon() {
         echo "already running as pid $(cat "$PID_FILE")"
         exit 0
       fi
-      nohup setsid bash -c "
+      # shellcheck disable=SC2086
+      nohup setsid env "VEX_WATCHER_CONFIG=${VEX_WATCHER_CONFIG:-}" bash -c "
         exec flock -n '$LOCK_FILE' '$SCRIPT_DIR/watcher.sh'
-      " >> "$LOG_FILE" 2>&1 &
-      echo $! > "$PID_FILE"
+      " >>"$LOG_FILE" 2>&1 &
+      echo $! >"$PID_FILE"
       sleep 1
       if kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         echo "started pid $(cat "$PID_FILE"); logs: $LOG_FILE"
@@ -129,7 +275,7 @@ daemon() {
       exec tail -n 100 -f "$LOG_FILE"
       ;;
     *)
-      echo "usage: $0 daemon {start|stop|status|tail}" >&2
+      echo "usage: $0 daemon [--config PATH] {start|stop|status|tail}" >&2
       exit 2
       ;;
   esac
@@ -150,13 +296,19 @@ install_unit() {
   echo "Optional token: EnvironmentFile in the unit points to /etc/vex-protocol-watcher.env"
 }
 
-case "$cmd" in
+if [[ $# -eq 0 || "${1:-}" == -* ]]; then
+  deploy_main "$@"
+  exit $?
+fi
+
+case "$1" in
   deploy)
-    deploy
+    shift
+    deploy_main "$@"
     ;;
   daemon)
     shift
-    daemon "${1:-start}"
+    daemon "$@"
     ;;
   install)
     install_unit
@@ -165,7 +317,7 @@ case "$cmd" in
     usage
     ;;
   *)
-    echo "unknown command: $cmd (try: deploy, daemon, install, help)" >&2
+    echo "unknown command: $1 (try: deploy, daemon, install, help)" >&2
     exit 2
     ;;
 esac
