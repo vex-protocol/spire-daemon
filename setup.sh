@@ -156,7 +156,7 @@ deploy_main() {
     (
       cd "$dir" || exit 1
       git fetch origin
-      git fetch origin "$branch"
+      git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
       git checkout -B "$branch" "origin/$branch"
     )
   }
@@ -167,10 +167,14 @@ deploy_main() {
 
   log "fetching origin (including branch $BRANCH)"
   git fetch --prune origin
-  git fetch origin "$BRANCH"
+  # Single-branch clones only map one remote ref; force this branch into refs/remotes/origin/*
+  if ! git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"; then
+    echo "deploy: could not fetch refs/heads/$BRANCH from origin (missing branch or no access?)" >&2
+    exit 1
+  fi
 
   if ! git rev-parse --verify -q "refs/remotes/origin/$BRANCH" >/dev/null; then
-    echo "deploy: origin/$BRANCH not found after fetch (wrong branch name or no access?)" >&2
+    echo "deploy: origin/$BRANCH ref missing after explicit fetch" >&2
     exit 1
   fi
 
