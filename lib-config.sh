@@ -19,7 +19,7 @@ vex_watcher_default_config_json() {
     "branch": "master"
   },
   "poll_interval_seconds": 90,
-  "state_dir": "~/vex-protocol-watcher",
+  "state_dir": null,
   "last_sha_file": null,
   "deploy_script": null,
   "deploy": {

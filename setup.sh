@@ -17,6 +17,7 @@ Commands:
 
 Config: config.json next to this script (or $VEX_WATCHER_CONFIG). Created automatically
 if missing when you use the default path. Env overrides file; CLI flags override both.
+Optional keys: state_dir, last_sha_file (default: same directory as watcher.sh/setup.sh).
 If deploy.repo_dir does not exist, it is git-cloned from github.owner/repo (or deploy.clone_url).
 First deploy installs nvm (if needed), Node NVM_NODE_VERSION (default 24), and pnpm (needs curl).
 If apps/spire/.env is missing, copies .env.example when present and fills SPK/JWT_SECRET via gen-spk.

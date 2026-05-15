@@ -6,14 +6,23 @@
 # changes, runs $DEPLOY_SCRIPT (default: setup.sh deploy).
 #
 # Config: JSON at $VEX_WATCHER_CONFIG, default <this_dir>/config.json (created
-# there automatically if missing when the path is implicit). github.branch is
-# the watched ref and default deploy checkout. Env overrides file; watcher.sh --config.
+# there automatically if missing when the path is implicit). Env overrides file;
+# watcher.sh --config. If GITHUB_BRANCH is not set in the environment, the poll
+# branch defaults to the current git checkout under deploy.repo_dir when that
+# repo exists (same idea as ./setup.sh). Set GITHUB_BRANCH in the environment
+# to pin the API branch, or VEX_WATCHER_INFER_BRANCH=0 to use only config.json.
 # GITHUB_TOKEN still lifts API rate limits.
 #
 # Logs to stdout/stderr; use `setup.sh daemon start` or systemd — log file
-# is watcher.log in this directory when using the daemon helper.
+# is watcher.log beside watcher.sh. State (last-sha) defaults to the same
+# directory unless config.json sets state_dir / last_sha_file.
 
 set -uo pipefail
+
+# If GITHUB_BRANCH is absent from the environment, we may infer it from the
+# clone's current branch after reading config (aligns watcher with ./setup.sh).
+GITHUB_BRANCH_WAS_UNSET=1
+[[ -n "${GITHUB_BRANCH+x}" ]] && GITHUB_BRANCH_WAS_UNSET=0
 
 WATCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -43,11 +52,20 @@ source "$WATCHER_DIR/lib-config.sh"
 cfg_path="$(vex_watcher_prepare_config_path "$WATCHER_DIR")" || exit 1
 vex_watcher_apply_config "$cfg_path" || exit 1
 
+REPO_DIR="${REPO_DIR:-$HOME/vex-protocol}"
+
+if [[ "${GITHUB_BRANCH_WAS_UNSET:-1}" -eq 1 ]] && [[ "${VEX_WATCHER_INFER_BRANCH:-1}" != 0 ]] && [[ -d "${REPO_DIR}/.git" ]]; then
+  _wb="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ -n "$_wb" && "$_wb" != "HEAD" ]]; then
+    GITHUB_BRANCH="$_wb"
+  fi
+fi
+
 GITHUB_OWNER="${GITHUB_OWNER:-vex-protocol}"
 GITHUB_REPO="${GITHUB_REPO:-vex-protocol}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-master}"
 POLL_INTERVAL="${POLL_INTERVAL:-90}"
-STATE_DIR="${STATE_DIR:-$HOME/vex-protocol-watcher}"
+STATE_DIR="${STATE_DIR:-$WATCHER_DIR}"
 LAST_SHA_FILE="${LAST_SHA_FILE:-$STATE_DIR/last-sha}"
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-$WATCHER_DIR/setup.sh}"
 
