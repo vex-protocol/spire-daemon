@@ -24,7 +24,7 @@ If apps/spire/.env is missing, copies .env.example when present and fills SPK/JW
 deploy flags (omit the word deploy when the first argument is already a flag, e.g. ./setup.sh --branch dev):
   --config|-c PATH
   --clone-url URL       (default https://github.com/<owner>/<repo>.git)
-  --branch STR          (git checkout; default is github.branch in config)
+  --branch STR          (git branch; omit to keep the repo's current checkout when it exists)
   --repo-dir, --compose-dir, --compose-file PATH
   --pre-compose SHELL_SNIPPET
   --no-build
@@ -126,6 +126,17 @@ deploy_main() {
   local COMPOSE_DIR="${COMPOSE_DIR:-$REPO_DIR/apps/spire}"
 
   log() { printf '[setup deploy %s] %s\n' "$(date -u +%FT%TZ)" "$*"; }
+
+  if [[ -z "${CLI_BRANCH:-}" ]] && [[ -d "${REPO_DIR}/.git" ]]; then
+    local _head
+    _head="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ -n "$_head" && "$_head" != "HEAD" ]]; then
+      if [[ "$_head" != "$BRANCH" ]]; then
+        log "no --branch flag: using existing repo checkout ($_head) instead of config ($BRANCH)"
+      fi
+      BRANCH="$_head"
+    fi
+  fi
 
   deploy_ensure_repo() {
     local dir="$1" branch="$2"
