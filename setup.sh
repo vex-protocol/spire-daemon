@@ -19,6 +19,7 @@ Config: config.json next to this script (or $VEX_WATCHER_CONFIG). Created automa
 if missing when you use the default path. Env overrides file; CLI flags override both.
 If deploy.repo_dir does not exist, it is git-cloned from github.owner/repo (or deploy.clone_url).
 First deploy installs nvm (if needed), Node NVM_NODE_VERSION (default 24), and pnpm (needs curl).
+If apps/spire/.env is missing, copies .env.example when present and fills SPK/JWT_SECRET via gen-spk.
 
 deploy flags (omit the word deploy when the first argument is already a flag, e.g. ./setup.sh --branch dev):
   --config|-c PATH
@@ -161,6 +162,41 @@ deploy_main() {
     )
   }
 
+  deploy_ensure_spire_env() {
+    local d="$1"
+    if [[ -f "$d/.env" ]]; then
+      return 0
+    fi
+    log "creating $d/.env (copy .env.example + gen-spk)"
+    if [[ -f "$d/.env.example" ]]; then
+      cp "$d/.env.example" "$d/.env"
+    else
+      printf '%s\n' 'SPIRE_FIPS=false' 'DB_TYPE=sqlite3' >"$d/.env"
+    fi
+    if [[ ! -f "$d/scripts/gen-spk.js" ]]; then
+      echo "deploy: missing $d/scripts/gen-spk.js (incomplete checkout?)" >&2
+      exit 1
+    fi
+    local spk jwt
+    mapfile -t _gk < <(cd "$d" && node scripts/gen-spk.js --raw)
+    spk="${_gk[0]:-}"
+    jwt="${_gk[1]:-}"
+    if [[ -z "$spk" || -z "$jwt" ]]; then
+      echo "deploy: gen-spk --raw did not produce SPK + JWT_SECRET lines" >&2
+      exit 1
+    fi
+    if grep -qE '^SPK=' "$d/.env"; then
+      sed -i "s/^SPK=.*/SPK=${spk}/" "$d/.env"
+    else
+      printf 'SPK=%s\n' "$spk" >>"$d/.env"
+    fi
+    if grep -qE '^JWT_SECRET=' "$d/.env"; then
+      sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${jwt}/" "$d/.env"
+    else
+      printf 'JWT_SECRET=%s\n' "$jwt" >>"$d/.env"
+    fi
+  }
+
   deploy_ensure_repo "$REPO_DIR" "$BRANCH"
 
   cd "$REPO_DIR"
@@ -192,6 +228,8 @@ deploy_main() {
   pnpm install --frozen-lockfile
 
   cd "$COMPOSE_DIR"
+
+  deploy_ensure_spire_env "$COMPOSE_DIR"
 
   if [[ -n "${PRE_COMPOSE_COMMAND:-}" ]]; then
     log "PRE_COMPOSE_COMMAND: $PRE_COMPOSE_COMMAND"
