@@ -148,15 +148,16 @@ deploy_main() {
     fi
     mkdir -p "$(dirname "$dir")"
     log "cloning $url -> $dir (branch $branch)"
-    if git clone --branch "$branch" --single-branch "$url" "$dir" 2>/dev/null; then
+    if git clone --branch "$branch" "$url" "$dir" 2>/dev/null; then
       return 0
     fi
-    log "clone with --branch $branch failed; cloning default remote then checking out $branch"
+    log "clone with --branch $branch failed; cloning full repo then checking out $branch"
     git clone "$url" "$dir"
     (
       cd "$dir" || exit 1
       git fetch origin
-      git checkout "$branch" || git checkout -B "$branch" "origin/$branch"
+      git fetch origin "$branch"
+      git checkout -B "$branch" "origin/$branch"
     )
   }
 
@@ -164,11 +165,17 @@ deploy_main() {
 
   cd "$REPO_DIR"
 
-  log "fetching origin"
+  log "fetching origin (including branch $BRANCH)"
   git fetch --prune origin
+  git fetch origin "$BRANCH"
 
-  log "checking out $BRANCH and resetting to origin/$BRANCH"
-  git checkout "$BRANCH"
+  if ! git rev-parse --verify -q "refs/remotes/origin/$BRANCH" >/dev/null; then
+    echo "deploy: origin/$BRANCH not found after fetch (wrong branch name or no access?)" >&2
+    exit 1
+  fi
+
+  log "checking out $BRANCH at origin/$BRANCH"
+  git checkout -B "$BRANCH" "refs/remotes/origin/$BRANCH"
   git reset --hard "origin/$BRANCH"
 
   local NEW_SHA
