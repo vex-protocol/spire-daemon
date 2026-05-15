@@ -51,7 +51,7 @@ STATE_DIR="${STATE_DIR:-$HOME/vex-protocol-watcher}"
 LAST_SHA_FILE="${LAST_SHA_FILE:-$STATE_DIR/last-sha}"
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-$WATCHER_DIR/setup.sh}"
 
-export PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 mkdir -p "$STATE_DIR"
 

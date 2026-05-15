@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-export PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 usage() {
   cat <<'EOF'
@@ -18,6 +18,7 @@ Commands:
 Config: config.json next to this script (or $VEX_WATCHER_CONFIG). Created automatically
 if missing when you use the default path. Env overrides file; CLI flags override both.
 If deploy.repo_dir does not exist, it is git-cloned from github.owner/repo (or deploy.clone_url).
+First deploy installs nvm (if needed), Node NVM_NODE_VERSION (default 24), and pnpm (needs curl).
 
 deploy flags (omit the word deploy when the first argument is already a flag, e.g. ./setup.sh --branch dev):
   --config|-c PATH
@@ -105,6 +106,8 @@ deploy_main() {
 
   # shellcheck source=lib-config.sh
   source "$SCRIPT_DIR/lib-config.sh"
+  # shellcheck source=lib-node.sh
+  source "$SCRIPT_DIR/lib-node.sh"
   local cfg_path
   cfg_path="$(vex_watcher_prepare_config_path "$SCRIPT_DIR")" || exit 1
   vex_watcher_apply_config "$cfg_path" || exit 1
@@ -171,6 +174,8 @@ deploy_main() {
   local NEW_SHA
   NEW_SHA="$(git rev-parse HEAD)"
   log "now at $NEW_SHA"
+
+  vex_watcher_ensure_nvm_node_pnpm
 
   log "pnpm install --frozen-lockfile"
   pnpm install --frozen-lockfile
